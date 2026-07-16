@@ -1,8 +1,8 @@
 """
 FASE 2: Simulador de Saturacao do Filtro Rapido de Areia
 COC351 - Matematica Computacional - UFRJ Poli 2026.1
-Autores: Gustavo Maia de Araujo (124046427)
-         Gilson Batista Machado Martins (124160815)
+Autores: Gustavo Maia de Araujo 
+         Gilson Batista Machado Martins 
 
 Metodos numericos aplicados:
     1. Busca de Raizes -- Metodo da Secante
