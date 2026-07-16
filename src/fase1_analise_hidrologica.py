@@ -1,8 +1,8 @@
 """
 FASE 1: Cruzamento de Dados e Analise Sazonal
 COC351 - Matematica Computacional - UFRJ Poli 2026.1
-Autores: Gustavo Maia de Araujo (124046427)
-         Gilson Batista Machado Martins (124160815)
+Autores: Gustavo Maia de Araujo 
+         Gilson Batista Machado Martins 
 
 Objetivo: cruzar dados de precipitacao (INMET A249) com leituras reais de
 turbidez da ETA Mazagao, aplicando lag time de 24h, e calibrar a equacao
