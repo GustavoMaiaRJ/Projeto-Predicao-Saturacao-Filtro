@@ -1,17 +1,16 @@
 """
-FASE 2: Simulador de Saturacao do Filtro Rapido de Areia
-COC351 - Matematica Computacional - UFRJ Poli 2026.1
-Autores: Gustavo Maia de Araujo 
+PHASE 2: Rapid Sand Filter Saturation Simulator
+COC351 - Computational Mathematics - UFRJ Poli 2026.1
+Authors: Gustavo Maia de Araujo 
          Gilson Batista Machado Martins 
 
-Metodos numericos aplicados:
-    1. Busca de Raizes -- Metodo da Secante
-    2. Integracao Numerica -- Regra de Simpson 1/3 Composta
+Applied numerical methods:
+    1. Root Finding -- Secant Method
+    2. Numerical Integration -- Composite Simpson's 1/3 Rule
 
-Objetivo: encontrar o instante de colapso (t*) do filtro rapido de areia
-da ETA Mazagao e o volume de agua tratada ate esse instante, considerando
-vazao oscilante da bomba e calibracao sazonal do fator de bloqueio de
-poros (beta).
+Objective: find the collapse instant (t*) of the Mazagao WTP rapid sand filter
+and the treated water volume up to that instant, considering oscillating
+pump flow and seasonal calibration of the pore blocking factor (beta).
 """
 
 import numpy as np
@@ -22,125 +21,125 @@ from pathlib import Path
 OUT = Path("outputs")
 OUT.mkdir(parents=True, exist_ok=True)
 
-# --- Parametros fisicos ---
-EPS_0    = 0.387        # porosidade inicial
-MU       = 1.002e-3     # viscosidade dinamica [Pa*s]
-L_LEITO  = 0.60         # espessura do leito [m]
-D_P      = 1.0e-3       # diametro do grao [m]
-RHO      = 998.0        # massa especifica da agua [kg/m3]
-G        = 9.81         # aceleracao gravitacional [m/s2]
-A_FILTRO = 17.28        # area do filtro [m2]
-DP0_MCA  = 0.30         # offset inicial de pressao [MCA]
-DP_MAX   = 3.0          # gatilho de colmatacao / retrolavagem [MCA]
+# --- Physical parameters ---
+EPS_0    = 0.387        # initial porosity
+MU       = 1.002e-3     # dynamic viscosity [Pa*s]
+L_BED    = 0.60         # bed thickness [m]
+D_P      = 1.0e-3       # grain diameter [m]
+RHO      = 998.0        # water density [kg/m3]
+G        = 9.81         # gravitational acceleration [m/s2]
+A_FILTER = 17.28        # filter area [m2]
+DP0_MWC  = 0.30         # initial pressure offset [mWC - meters of water column]
+DP_MAX   = 3.0          # clogging / backwashing trigger [mWC]
 
-# Estacoes hidrologicas calibradas (k, Q_base em L/s)
-# k [1/h]: taxa de reducao de porosidade, calibrada offline via
-#          k = beta * SST * Q / (A * L * rho_lodo), SST = 0.85 * NTU
-# Ver Secao 3.2 do relatorio para a justificativa completa da calibracao.
-ESTACOES = {
-    "Enchente": {"k": 0.0175, "Q_base": 21.5, "beta": 38},
-    "Cheia":    {"k": 0.0115, "Q_base": 20.0, "beta": 25},
-    "Vazante":  {"k": 0.0075, "Q_base": 19.5, "beta": 16},
-    "Seca":     {"k": 0.0058, "Q_base": 18.0, "beta": 13},
+# Calibrated hydrological seasons (k, Q_base in L/s)
+# k [1/h]: porosity reduction rate, calibrated offline via
+#          k = beta * TSS * Q / (A * L * rho_sludge), TSS = 0.85 * NTU
+# See Section 3.2 of the report for the full calibration justification.
+SEASONS = {
+    "Flood":      {"k": 0.0175, "Q_base": 21.5, "beta": 38},
+    "High_Water": {"k": 0.0115, "Q_base": 20.0, "beta": 25},
+    "Ebb":        {"k": 0.0075, "Q_base": 19.5, "beta": 16},
+    "Dry":        {"k": 0.0058, "Q_base": 18.0, "beta": 13},
 }
 
 
 # ============================================================================
-# MODELO FISICO
+# PHYSICAL MODEL
 # ============================================================================
 
-def Q_din(t, Q_base):
+def dyn_Q(t, Q_base):
     """
-    Vazao dinamica com oscilacao senoidal, representando a variacao
-    real do inversor de frequencia da bomba:
+    Dynamic flow with sinusoidal oscillation, representing the real
+    variation of the pump's variable frequency drive:
         Q(t) = Q_base + 1.5*sin(t)   [L/s]
-    Retorna em m3/s.
+    Returns in m3/s.
     """
     return (Q_base + 1.5 * np.sin(t)) * 1e-3  # L/s -> m3/s
 
 
 def ergun(eps, v):
     """
-    Equacao de Ergun-Botari para perda de carga em leito granular [Pa].
+    Ergun-Botari equation for head loss in a granular bed [Pa].
 
-        dP = [150*mu*L*(1-eps)^2 / (dp^2*eps^3)] * v      <- viscoso (Darcy)
-           + [1.75*rho*L*(1-eps) / (dp*eps^3)] * v^2       <- inercial (Forchheimer)
+        dP = [150*mu*L*(1-eps)^2 / (dp^2*eps^3)] * v      <- viscous (Darcy)
+           + [1.75*rho*L*(1-eps) / (dp*eps^3)] * v^2       <- inertial (Forchheimer)
 
-    Parametros
+    Parameters
     ----------
-    eps : porosidade atual do leito [adimensional]
-    v   : velocidade superficial [m/s]
+    eps : current bed porosity [dimensionless]
+    v   : superficial velocity [m/s]
     """
     if eps <= 0.005:
         return np.inf
-    t_vis = 150 * MU * L_LEITO * (1 - eps) ** 2 / (D_P ** 2 * eps ** 3)
-    t_ine = 1.75 * RHO * L_LEITO * (1 - eps) / (D_P * eps ** 3) * v
+    t_vis = 150 * MU * L_BED * (1 - eps) ** 2 / (D_P ** 2 * eps ** 3)
+    t_ine = 1.75 * RHO * L_BED * (1 - eps) / (D_P * eps ** 3) * v
     return (t_vis + t_ine) * v
 
 
-def f_raiz(t, k, Q_base):
+def f_root(t, k, Q_base):
     """
-    Funcao-alvo para a busca de raiz:
+    Target function for root finding:
         f(t) = DeltaP_total(t) - DeltaP_max
 
-    f(t*) = 0  <=>  o filtro atingiu o limite de 3.0 MCA (colapso).
+    f(t*) = 0  <=>  the filter reached the 3.0 mWC limit (collapse).
     """
     eps = max(EPS_0 - k * t, 0.005)
-    v   = Q_din(t, Q_base) / A_FILTRO
-    dP  = ergun(eps, v) / (RHO * G) + DP0_MCA  # Pa -> MCA
+    v   = dyn_Q(t, Q_base) / A_FILTER
+    dP  = ergun(eps, v) / (RHO * G) + DP0_MWC  # Pa -> mWC
     return dP - DP_MAX
 
 
 # ============================================================================
-# METODO 1 -- BUSCA DE RAIZES: METODO DA SECANTE
+# METHOD 1 -- ROOT FINDING: SECANT METHOD
 # ============================================================================
 
-def metodo_secante(f, t0=5.0, t1=6.0, tol=1e-8, max_iter=200):
+def secant_method(f, t0=5.0, t1=6.0, tol=1e-8, max_iter=200):
     """
-    Metodo da Secante com pre-condicionador de bracketing adaptativo.
+    Secant method with adaptive bracketing pre-conditioner.
 
-    Iteracao central:
+    Central iteration:
         t_{n+1} = t_n - f(t_n) * (t_n - t_{n-1}) / (f(t_n) - f(t_{n-1}))
 
-    Justificativa: a derivada numerica de f(t) amplificaria o ruido
-    senoidal de Q(t), fazendo o metodo de Newton-Raphson divergir.
-    A Secante usa apenas avaliacoes de f, sem depender de derivada,
-    garantindo estabilidade sob a perturbacao oscilatoria.
+    Justification: the numerical derivative of f(t) would amplify the sinusoidal
+    noise of Q(t), causing the Newton-Raphson method to diverge.
+    The Secant uses only f evaluations, without depending on derivatives,
+    ensuring stability under the oscillatory disturbance.
 
-    Pre-condicionador de bracketing:
-        Os chutes fixos t0=5h e t1=6h partem antes da raiz (f<0 em
-        ambos). A secante pura divergiria nesse caso. O pre-condicionador
-        avanca a janela com passo adaptativo (x1.5) ate encontrar
-        f(t0)*f(t1) < 0 (mudanca de sinal), seguido de 3 passos de
-        bissecao para refinar a janela antes de aplicar a Secante.
+    Bracketing pre-conditioner:
+        The fixed guesses t0=5h and t1=6h start before the root (f<0 in
+        both). The pure secant would diverge in this case. The pre-conditioner
+        advances the window with an adaptive step (x1.5) until finding
+        f(t0)*f(t1) < 0 (sign change), followed by 3 bisection steps
+        to refine the window before applying the Secant.
 
-    Parametros
+    Parameters
     ----------
-    f        : funcao-alvo f(t*) = 0
-    t0, t1   : chutes iniciais [h] (conforme especificacao: 5.0 e 6.0)
-    tol      : tolerancia de convergencia |f(t)| < tol [MCA]
-    max_iter : limite total de iteracoes
+    f        : target function f(t*) = 0
+    t0, t1   : initial guesses [h] (as specified: 5.0 and 6.0)
+    tol      : convergence tolerance |f(t)| < tol [mWC]
+    max_iter : total iteration limit
 
-    Retorna
+    Returns
     -------
-    dict com: t_star, iteracoes (apenas fase Secante), residuo, convergiu
+    dict with: t_star, iterations (Secant phase only), residual, converged
     """
     f0, f1 = f(t0), f(t1)
     iters = 2
 
-    # Fase 1: bracketing adaptativo
-    passo = (t1 - t0)
+    # Phase 1: adaptive bracketing
+    step = (t1 - t0)
     while f0 * f1 > 0 and iters < max_iter:
-        passo *= 1.5
-        t1, f1 = t0 + passo, f(t0 + passo)
+        step *= 1.5
+        t1, f1 = t0 + step, f(t0 + step)
         iters += 1
 
     if f0 * f1 > 0:
-        return {"t_star": None, "iteracoes": iters,
-                "residuo": None, "convergiu": False,
-                "mensagem": "Bracketing falhou."}
+        return {"t_star": None, "iterations": iters,
+                "residual": None, "converged": False,
+                "message": "Bracketing failed."}
 
-    # Fase 1b: refinamento por bissecao (3 passos)
+    # Phase 1b: bisection refinement (3 steps)
     for _ in range(3):
         t_m, f_m = (t0 + t1) / 2, f((t0 + t1) / 2)
         iters += 1
@@ -149,7 +148,7 @@ def metodo_secante(f, t0=5.0, t1=6.0, tol=1e-8, max_iter=200):
         else:
             t0, f0 = t_m, f_m
 
-    # Fase 2: Metodo da Secante propriamente dito
+    # Phase 2: Secant method itself
     iter_sec = 0
     for _ in range(max_iter - iters):
         den = f1 - f0
@@ -160,37 +159,37 @@ def metodo_secante(f, t0=5.0, t1=6.0, tol=1e-8, max_iter=200):
         iters += 1
         iter_sec += 1
         if abs(f2) < tol:
-            return {"t_star": t2, "iteracoes": iter_sec,
-                    "residuo": abs(f2), "convergiu": True}
+            return {"t_star": t2, "iterations": iter_sec,
+                    "residual": abs(f2), "converged": True}
         t0, f0 = t1, f1
         t1, f1 = t2, f2
 
-    return {"t_star": t1, "iteracoes": iter_sec,
-            "residuo": abs(f1), "convergiu": False}
+    return {"t_star": t1, "iterations": iter_sec,
+            "residual": abs(f1), "converged": False}
 
 
 # ============================================================================
-# METODO 2 -- INTEGRACAO NUMERICA: REGRA DE SIMPSON 1/3 COMPOSTA
+# METHOD 2 -- NUMERICAL INTEGRATION: COMPOSITE SIMPSON'S 1/3 RULE
 # ============================================================================
 
 def simpson_volume(t_star, Q_base, n=None):
     """
-    Calcula o volume de agua tratada pela Regra de Simpson 1/3 Composta:
+    Calculates the treated water volume using the Composite Simpson's 1/3 Rule:
 
-        V = integral de 0 a t* de Q(t) dt
-          ~= (h/3) * [Q0 + 4*Q1 + 2*Q2 + 4*Q3 + ... + Qn]
+        V = integral from 0 to t* of Q(t) dt
+         ~= (h/3) * [Q0 + 4*Q1 + 2*Q2 + 4*Q3 + ... + Qn]
 
-    com passo uniforme h = t*/n (n par). Erro de truncamento: O(h^4).
+    with uniform step h = t*/n (even n). Truncation error: O(h^4).
 
-    Parametros
+    Parameters
     ----------
-    t_star  : instante de colapso [h]
-    Q_base  : vazao base [L/s]
-    n       : numero de subintervalos (par); default: ceil(t*/0.25)
+    t_star  : collapse instant [h]
+    Q_base  : base flow [L/s]
+    n       : number of subintervals (even); default: ceil(t*/0.25)
 
-    Retorna
+    Returns
     -------
-    Volume tratado [m3]
+    Treated volume [m3]
     """
     if n is None:
         n = int(np.ceil(t_star / 0.25))
@@ -200,9 +199,9 @@ def simpson_volume(t_star, Q_base, n=None):
 
     t_vec = np.linspace(0.0, t_star, n + 1)
     h     = t_vec[1] - t_vec[0]
-    Q_vec = np.array([Q_din(t, Q_base) * 3600 for t in t_vec])  # m3/h
+    Q_vec = np.array([dyn_Q(t, Q_base) * 3600 for t in t_vec])  # m3/h
 
-    # Coeficientes de Simpson: 1, 4, 2, 4, 2, ..., 4, 1
+    # Simpson's coefficients: 1, 4, 2, 4, 2, ..., 4, 1
     coef = np.ones(n + 1)
     coef[1:-1:2] = 4.0
     coef[2:-2:2] = 2.0
@@ -211,15 +210,15 @@ def simpson_volume(t_star, Q_base, n=None):
 
 
 # ============================================================================
-# VISUALIZACAO
+# VISUALIZATION
 # ============================================================================
 
-def gerar_figura_resultados(resultados, caminho_saida):
+def generate_results_figure(results, output_path):
     """
-    Gera figura com 3 paineis:
-      (A) Evolucao de DeltaP(t) por estacao
-      (B) Decaimento da porosidade eps(t)
-      (C) Eficiencia computacional -- iteracoes da Secante
+    Generates a figure with 3 panels:
+      (A) Evolution of DeltaP(t) per season
+      (B) Porosity decay eps(t)
+      (C) Computational efficiency -- Secant iterations
     """
     fig = plt.figure(figsize=(20, 11))
     gs = gridspec.GridSpec(2, 2, width_ratios=[1.5, 1])
@@ -227,78 +226,78 @@ def gerar_figura_resultados(resultados, caminho_saida):
     ax_eps = fig.add_subplot(gs[1, 0], sharex=ax_dp)
     ax_bar = fig.add_subplot(gs[:, 1])
 
-    cores = {"Enchente": "#002d72", "Cheia": "#1f77b4",
-             "Vazante": "#ff7f0e", "Seca": "#2ca02c"}
+    colors = {"Flood": "#002d72", "High_Water": "#1f77b4",
+              "Ebb": "#ff7f0e", "Dry": "#2ca02c"}
 
-    for nome, res in resultados.items():
-        cor = cores[nome]
+    for name, res in results.items():
+        color = colors[name]
         t_vec = np.linspace(0, res["t_star"], 300)
-        dP_vec  = [f_raiz(t, res["k"], res["Q_base"]) + DP_MAX for t in t_vec]
+        dP_vec  = [f_root(t, res["k"], res["Q_base"]) + DP_MAX for t in t_vec]
         eps_vec = [max(EPS_0 - res["k"] * t, 0.005) for t in t_vec]
 
-        ax_dp.plot(t_vec, dP_vec, color=cor, lw=2.2,
-                  label=f"{nome} (t*={res['t_star']:.1f}h)")
-        ax_dp.plot(res["t_star"], DP_MAX, "o", color=cor, ms=10)
+        ax_dp.plot(t_vec, dP_vec, color=color, lw=2.2,
+                   label=f"{name} (t*={res['t_star']:.1f}h)")
+        ax_dp.plot(res["t_star"], DP_MAX, "o", color=color, ms=10)
 
-        ax_eps.plot(t_vec, eps_vec, color=cor, lw=2.2)
+        ax_eps.plot(t_vec, eps_vec, color=color, lw=2.2)
 
-    ax_dp.axhline(DP_MAX, color="red", ls="--", label="Limite: 3.0 MCA")
-    ax_dp.set_ylabel("Perda de carga (MCA)")
-    ax_dp.set_title("(A) Evolucao da Perda de Carga", fontweight="bold")
+    ax_dp.axhline(DP_MAX, color="red", ls="--", label="Limit: 3.0 mWC")
+    ax_dp.set_ylabel("Head loss (mWC)")
+    ax_dp.set_title("(A) Head Loss Evolution", fontweight="bold")
     ax_dp.legend(fontsize=9)
     ax_dp.grid(True, ls="--", alpha=0.5)
 
-    ax_eps.set_xlabel("Tempo (horas)")
-    ax_eps.set_ylabel("Porosidade")
-    ax_eps.set_title("(B) Decaimento da Porosidade", fontweight="bold")
+    ax_eps.set_xlabel("Time (hours)")
+    ax_eps.set_ylabel("Porosity")
+    ax_eps.set_title("(B) Porosity Decay", fontweight="bold")
     ax_eps.grid(True, ls="--", alpha=0.5)
 
-    nomes  = list(resultados.keys())
-    iters  = [resultados[n]["iteracoes"] for n in nomes]
-    cores_b = [cores[n] for n in nomes]
-    bars = ax_bar.bar(nomes, iters, color=cores_b, alpha=0.85)
+    names  = list(results.keys())
+    iters  = [results[n]["iterations"] for n in names]
+    colors_b = [colors[n] for n in names]
+    bars = ax_bar.bar(names, iters, color=colors_b, alpha=0.85)
     for bar, it in zip(bars, iters):
         ax_bar.text(bar.get_x() + bar.get_width() / 2, it + 0.1,
                     str(it), ha="center", fontweight="bold", fontsize=14)
-    ax_bar.set_ylabel("Iteracoes da Secante")
-    ax_bar.set_title("(C) Eficiencia Computacional", fontweight="bold")
+    ax_bar.set_ylabel("Secant Iterations")
+    ax_bar.set_title("(C) Computational Efficiency", fontweight="bold")
     ax_bar.grid(True, ls="--", alpha=0.5, axis="y")
 
     plt.tight_layout()
-    fig.savefig(caminho_saida, dpi=150, bbox_inches="tight")
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close()
 
 
 # ============================================================================
-# SIMULACAO PRINCIPAL
+# MAIN SIMULATION
 # ============================================================================
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("FASE 2 -- Simulador de Saturacao do Filtro")
+    print("PHASE 2 -- Filter Saturation Simulator")
     print("=" * 60)
 
-    resultados = {}
+    results = {}
 
-    for nome, p in ESTACOES.items():
+    for name, p in SEASONS.items():
         k, Qb = p["k"], p["Q_base"]
-        res = metodo_secante(lambda t: f_raiz(t, k, Qb))
-        vol = simpson_volume(res["t_star"], Qb) if res["convergiu"] else 0
+        res = secant_method(lambda t: f_root(t, k, Qb))
+        vol = simpson_volume(res["t_star"], Qb) if res["converged"] else 0
 
-        resultados[nome] = {
+        results[name] = {
             "t_star": res["t_star"], "k": k, "Q_base": Qb,
-            "iteracoes": res["iteracoes"], "residuo": res["residuo"],
+            "iterations": res["iterations"], "residual": res["residual"],
             "volume": vol,
         }
 
-        print(f"\n[{nome}]")
-        print(f"  t*      = {res['t_star']:.2f} h")
+        print(f"\n[{name}]")
+        print(f"  t* = {res['t_star']:.2f} h")
         print(f"  Volume  = {vol:.0f} m3 ({vol*1000:.0f} L)")
-        print(f"  Secante = {res['iteracoes']} iteracoes | "
-              f"residuo = {res['residuo']:.2e} MCA")
+        print(f"  Secant  = {res['iterations']} iterations | "
+              f"residual = {res['residual']:.2e} mWC")
 
-    gerar_figura_resultados(resultados, OUT / "fig_simulador_saturacao.png")
+    generate_results_figure(results, OUT / "fig_saturation_simulator.png")
 
-    total_litros = sum(r["volume"] for r in resultados.values()) * 1000
-    print(f"\nTotal (soma das 4 carreiras): {total_litros:.0f} L")
-    print(f"\nFigura salva em: {(OUT / 'fig_simulador_saturacao.png').resolve()}")
+    total_liters = sum(r["volume"] for r in results.values()) * 1000
+    print(f"\nTotal (sum of the 4 runs): {total_liters:.0f} L")
+    print(f"\nFigure saved at: {(OUT / 'fig_saturation_simulator.png').resolve()}")         
