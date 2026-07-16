@@ -1,2 +1,2 @@
 # projeto-predicaosaturacaofiltro
-Predição numérica de saturação de filtros rápidos de areia com vazão oscilante utilizando o Método da Secante e Regra de Simpson 1/3.
+Este projeto desenvolve um modelo numérico para suprir a falta de monitoramento preditivo na ETA de Mazagão (AP). O código calcula o instante exato de saturação ($t^*$) do filtro rápido de areia — que colapsa aos 3,0 MCA devido à argila amazônica — e o respectivo volume de água tratado. O diferencial da abordagem é a simulação da dinâmica real da planta, utilizando vazão oscilante e considerando as especificidades das quatro estações hidrológicas do ano.
