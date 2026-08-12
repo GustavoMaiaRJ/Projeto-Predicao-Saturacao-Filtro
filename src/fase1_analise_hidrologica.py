@@ -5,7 +5,7 @@ Authors: Gustavo Maia de Araujo
          Gilson Batista Machado Martins 
 
 Objective: merge precipitation data (INMET A249) with real turbidity
-readings from the Mazagao WTP, applying a 24h lag time, and calibrate
+readings, applying a 24h lag time, and calibrate
 the power law equation TRB = k * P^m per hydrological season via curve_fit.
 """
 
@@ -188,8 +188,8 @@ if __name__ == "__main__":
                   f"R2={params['R2']:.3f}, N={params['N']}")
 
     plot_seasonal_dispersion(df, parameters, OUT / "fig1_seasonal_dispersion.png")
-    export_csv(df, OUT / "merged_real_data_mazagao.csv")
+    export_csv(df, OUT / "merged_real_data.csv")
 
     print(f"\nFiles saved at: {OUT.resolve()}")
     print("  - fig1_seasonal_dispersion.png")
-    print("  - merged_real_data_mazagao.csv")
+    print("  - merged_real_data.csv")
