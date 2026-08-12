@@ -8,7 +8,7 @@ Applied numerical methods:
     1. Root Finding -- Secant Method
     2. Numerical Integration -- Composite Simpson's 1/3 Rule
 
-Objective: find the collapse instant (t*) of the Mazagao WTP rapid sand filter
+Objective: find the collapse instant (t*) of a WTP rapid sand filter
 and the treated water volume up to that instant, considering oscillating
 pump flow and seasonal calibration of the pore blocking factor (beta).
 """
